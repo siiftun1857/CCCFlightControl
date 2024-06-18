@@ -1242,27 +1242,27 @@ function flightGizmoScreen:refresh()
             self.monitor.blit("<<", "24", "ff")
 
             self.monitor.setCursorPos(2, 3)
-            self.monitor.blit("P: --      ++", "1ffffffffffff", "fffb5ffffff1e")
+            self.monitor.blit("P: --      ++", "100ffffffffff", "fffb5ffffff1e")
             self.monitor.setCursorPos(8, 3)
             self.monitor.write(string.format("%0.2f", properties.omega_P))
 
             self.monitor.setCursorPos(2, 4)
-            self.monitor.blit("D: --      ++", "9ffffffffffff", "fffb5ffffff1e")
+            self.monitor.blit("D: --      ++", "900ffffffffff", "fffb5ffffff1e")
             self.monitor.setCursorPos(8, 4)
             self.monitor.write(string.format("%0.2f", properties.omega_D))
 
             self.monitor.setCursorPos(2, 6)
-            self.monitor.blit("spaceAcc-   +", "fffffffffffff", "ffffffffbfffe")
+            self.monitor.blit("spaceAcc-   +", "00000000f000f", "ffffffffbfffe")
             self.monitor.setCursorPos(11, 6)
             self.monitor.write(string.format("%0.1f", properties.space_Acc))
 
             self.monitor.setCursorPos(2, 7)
-            self.monitor.blit("quad_Acc-   +", "fffffffffffff", "ffffffffbfffe")
+            self.monitor.blit("quad_Acc-   +", "00000000f000f", "ffffffffbfffe")
             self.monitor.setCursorPos(11, 7)
             self.monitor.write(string.format("%0.1f", properties.quad_Acc))
 
             self.monitor.setCursorPos(2, 8)
-            self.monitor.blit("MOVE_D: -   +", "fffffffffffff", "ffffffffbfffe")
+            self.monitor.blit("MOVE_D: -   +", "00000000f000f", "ffffffffbfffe")
             self.monitor.setCursorPos(11, 8)
             self.monitor.write(string.format("%0.1f", properties.move_D))
         elseif self.settingPage.helicopter.flag then
@@ -1270,39 +1270,39 @@ function flightGizmoScreen:refresh()
             self.monitor.blit("<<", "24", "ff")
 
             self.monitor.setCursorPos(2, 3)
-            self.monitor.blit("Yaw_P--    ++", "fffffffffffff", "fffffb5ffff1e")
+            self.monitor.blit("Yaw_P--    ++", "00000ff0000ff", "fffffb5ffff1e")
             self.monitor.setCursorPos(9, 3)
             self.monitor.write(string.format("%0.2f", properties.helicopt_YAW_P))
 
             self.monitor.setCursorPos(2, 4)
-            self.monitor.blit("Rot_P--    ++", "fffffffffffff", "fffffb5ffff1e")
+            self.monitor.blit("Rot_P--    ++", "00000ff0000ff", "fffffb5ffff1e")
             self.monitor.setCursorPos(9, 4)
             self.monitor.write(string.format("%0.2f", properties.helicopt_ROT_P))
 
             self.monitor.setCursorPos(2, 5)
-            self.monitor.blit("Rot_D--    ++", "fffffffffffff", "fffffb5ffff1e")
+            self.monitor.blit("Rot_D--    ++", "00000ff0000ff", "fffffb5ffff1e")
             self.monitor.setCursorPos(9, 5)
             self.monitor.write(string.format("%0.2f", properties.helicopt_ROT_D))
 
             self.monitor.setCursorPos(2, 6)
-            self.monitor.blit("ACC:-   +", "fffffffff", "ffffbfffe")
+            self.monitor.blit("ACC:-   +", "0000fffff", "ffffbfffe")
             self.monitor.setCursorPos(7, 6)
             self.monitor.write(string.format("%0.1f", properties.helicopt_ACC))
 
             self.monitor.setCursorPos(2, 7)
-            self.monitor.blit("Acc_D--    ++", "fffffffffffff", "fffffb5ffff1e")
+            self.monitor.blit("Acc_D--    ++", "00000ff0000ff", "fffffb5ffff1e")
             self.monitor.setCursorPos(9, 7)
             self.monitor.write(string.format("%0.2f", properties.helicopt_ACC_D))
 
             self.monitor.setCursorPos(2, 8)
-            self.monitor.blit("MaxAngle:-  +", "fffffffffffff", "fffffffffbffe")
+            self.monitor.blit("MaxAngle:-  +", "000000000f00f", "fffffffffbffe")
             self.monitor.setCursorPos(12, 8)
             self.monitor.write(string.format("%d", properties.helicopt_MAX_ANGLE))
         elseif self.settingPage.User_Change.flag then
             self.monitor.setCursorPos(1, 2)
             self.monitor.blit("<<", "24", "ff")
             self.monitor.setCursorPos(2, 3)
-            self.monitor.blit("selectUser:", "fffffffffff", "fffffffffff")
+            self.monitor.blit("selectUser:", "88888888888", "fffffffffff")
             for i = 1, 5, 1 do
                 if scanner.playerList[i] then
                     local name = scanner.playerList[i].name
@@ -1311,14 +1311,14 @@ function flightGizmoScreen:refresh()
                         for j = 1, 10, 1 do
                             local tmpChar = name:sub(j, j)
                             if #tmpChar ~= 0 then
-                                self.monitor.blit(tmpChar, "f", "4")
+                                self.monitor.blit(tmpChar, "f", "2")
                             end
                         end
                     else
                         for j = 1, 10, 1 do
                             local tmpChar = name:sub(j, j)
                             if #tmpChar ~= 0 then
-                                self.monitor.blit(tmpChar, "0", "3")
+                                self.monitor.blit(tmpChar, "8", "f")
                             end
                         end
                     end
@@ -1332,17 +1332,17 @@ function flightGizmoScreen:refresh()
             self.monitor.blit("<<", "24", "ff")
 
             self.monitor.setCursorPos(2, 4)
-            self.monitor.blit("AirMass-    +", "fffffffffffff", "fffffffbffffe")
+            self.monitor.blit("AirMass-    +", "0000000f0000f", "fffffffbffffe")
             self.monitor.setCursorPos(10, 4)
             self.monitor.write(string.format("%0.1f", properties.airMass))
 
             self.monitor.setCursorPos(2, 6)
-            self.monitor.blit("Gravity-    +", "fffffffffffff", "fffffffbffffe")
+            self.monitor.blit("Gravity-    +", "0000000f0000f", "fffffffbffffe")
             self.monitor.setCursorPos(10, 6)
             self.monitor.write(string.format("%0.1f", properties.quadGravity))
 
             self.monitor.setCursorPos(2, 8)
-            self.monitor.blit("0_Point-    +", "fffffffffffff", "fffffffbffffe")
+            self.monitor.blit("0_Point-    +", "0000000f0000f", "fffffffbffffe")
             self.monitor.setCursorPos(10, 8)
             self.monitor.write(string.format("%0.1f", properties.ZeroPoint))
         elseif self.settingPage.SET_ATT.flag then
@@ -1352,10 +1352,10 @@ function flightGizmoScreen:refresh()
             for k, v in pairs(self.faceList) do
                 if v.name == properties.shipFace then
                     self.monitor.setCursorPos(v.x, v.y)
-                    self.monitor.blit(string.sub(v.name, 1, 1), "f", "4")
+                    self.monitor.blit(string.sub(v.name, 1, 1), "f", "e")
                 else
                     self.monitor.setCursorPos(v.x, v.y)
-                    self.monitor.blit(string.sub(v.name, 1, 1), "7", "3")
+                    self.monitor.blit(string.sub(v.name, 1, 1), "8", "f")
                 end
             end
         else
