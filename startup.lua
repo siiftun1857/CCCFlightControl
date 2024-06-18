@@ -10,6 +10,35 @@ if not ship.setStatic then
     return
 end
 
+---------logger---------
+local logger = {}
+logger.logs = {}
+logger.curId = 0
+logger.logMessage = function(text)
+    logger.curId = logger.curId + 1
+    table.insert(logger.logs, {
+        id = logger.curId,
+        level = "info",
+        text = text,
+    })
+end
+logger.logWarning = function(text)
+    logger.curId = logger.curId + 1
+    table.insert(logger.logs, {
+        id = logger.curId,
+        level = "warning",
+        text = text,
+    })
+end
+logger.logError = function(text)
+    logger.curId = logger.curId + 1
+    table.insert(logger.logs, {
+        id = logger.curId,
+        level = "error",
+        text = text,
+    })
+end
+
 ---------inner---------
 local modelist = {
     { y = 3, name = "spaceShip ", flag = false, lock = false },
@@ -1041,10 +1070,11 @@ pdControl.pointLoop = function()
         tgAg, pos)
 end
 ---------screens---------
+local abstractScreen, flightGizmoScreen, debugScreen, logScreen, screensManagerScreen, screenPickerScreen, loadingScreen
 
 -- abstractScreen
 -- 空屏幕，所有其他屏幕类的基类
-local abstractScreen = {
+abstractScreen = {
     screenTitle = "blank"
 }
 abstractScreen.__index = abstractScreen
@@ -1054,6 +1084,8 @@ function abstractScreen:init() end
 function abstractScreen:refresh() end
 
 function abstractScreen:onTouch(x, y) end
+
+function abstractScreen:onKey(key, is_held) end -- 只有显示在主机上的屏幕可以响应按键
 
 function abstractScreen:onDisconnect()
     self.monitor.setTextColor(colors.white)
@@ -1088,7 +1120,7 @@ function abstractScreen:report() end
 
 -- flightGizmoScreen
 -- 飞控系统屏幕
-local flightGizmoScreen = {
+flightGizmoScreen = {
     screenTitle = "gizmo"
 }
 flightGizmoScreen.__index = setmetatable(flightGizmoScreen, abstractScreen)
@@ -1604,9 +1636,108 @@ function flightGizmoScreen:onTouch(x, y)
     end
 end
 
+-- debugScreen
+-- 数据调试屏幕
+debugScreen = {
+    screenTitle = "debug"
+}
+debugScreen.__index = setmetatable(debugScreen, abstractScreen)
+
+function debugScreen:init()
+    self.rows = {
+        {
+            name = "logs",
+            value = function()
+                return logger.curId
+            end
+        },
+        {
+            name = "mode",
+            value = function()
+                return properties.mode
+            end
+        },
+    }
+end
+
+function debugScreen:refresh()
+    self.monitor.setTextColor(colors.white)
+    self.monitor.setBackgroundColor(colors.lightBlue)
+    self.monitor.clear()
+    self.monitor.setCursorPos(1, 1)
+    self.monitor.setBackgroundColor(colors.red)
+    self.monitor.write("[<]")
+    self.monitor.setBackgroundColor(colors.lightBlue)
+    self.monitor.write(" DEBUG:")
+    for i, row in ipairs(self.rows) do
+        self.monitor.setCursorPos(1, i + 1)
+        self.monitor.write(row.name .. ": " .. row.value())
+    end
+end
+
+function debugScreen:onTouch(x, y)
+    if y == 1 and x <= 3 then
+        monitorUtil.newScreen(self.name, screenPickerScreen)
+        return
+    end
+end
+
+-- logScreen
+-- 日志屏幕
+logScreen = {
+    screenTitle = "log"
+}
+logScreen.__index = setmetatable(logScreen, abstractScreen)
+
+function logScreen:init()
+    self.lastLogId = nil
+end
+
+function logScreen:refresh()
+    if self.lastLogId == logger.curId then
+        return
+    end
+    self.lastLogId = logger.curId
+    self.monitor.setTextColor(colors.white)
+    self.monitor.setBackgroundColor(colors.lightBlue)
+    self.monitor.clear()
+    self.monitor.setCursorPos(1, 1)
+    self.monitor.setBackgroundColor(colors.red)
+    self.monitor.write("[<]")
+    self.monitor.setBackgroundColor(colors.lightBlue)
+    self.monitor.write(" Log:")
+    local startAt = logger.curId - ({ self.monitor.getSize() })[2] + 2
+    local line = 1
+    for i, row in ipairs(logger.logs) do
+        if i >= startAt then
+            line = line + 1
+            self.monitor.setCursorPos(1, line)
+            self.monitor.write(("%2i."):format(i))
+            if row.level == "error" then
+                self.monitor.setBackgroundColor(colors.red)
+            elseif row.level == "warning" then
+                self.monitor.setBackgroundColor(colors.orange)
+            elseif line % 2 == 0 then
+                self.monitor.setBackgroundColor(colors.lightGray)
+            else
+                self.monitor.setBackgroundColor(colors.gray)
+            end
+            self.monitor.write(row.text)
+            self.monitor.setBackgroundColor(colors.lightBlue)
+        end
+    end
+end
+
+function logScreen:onTouch(x, y)
+    if y == 1 and x <= 3 then
+        monitorUtil.newScreen(self.name, screenPickerScreen)
+        return
+    end
+end
+
 -- screensManagerScreen
 -- 用于管理所有其他的屏幕；主机专属屏幕
-local screensManagerScreen = {
+screensManagerScreen = {
     screenTitle = "screens manager"
 }
 screensManagerScreen.__index = setmetatable(screensManagerScreen, abstractScreen)
@@ -1631,7 +1762,10 @@ function screensManagerScreen:refresh()
     self.monitor.setBackgroundColor(colors.lightBlue)
     self.monitor.clear()
     self.monitor.setCursorPos(1, 1)
-    self.monitor.write("Monitors:")
+    self.monitor.setBackgroundColor(colors.red)
+    self.monitor.write("[<]")
+    self.monitor.setBackgroundColor(colors.lightBlue)
+    self.monitor.write(" Monitors:")
     local newrows = {}
     for i, name in ipairs(redirects) do
         self.monitor.setCursorPos(1, i + 1)
@@ -1673,6 +1807,10 @@ function screensManagerScreen:refresh()
 end
 
 function screensManagerScreen:onTouch(x, y)
+    if y == 1 and x <= 3 then
+        monitorUtil.newScreen(self.name, screenPickerScreen)
+        return
+    end
     local name = self.rows[y - 1]
     if name then
         if tableHasValue(properties.enabledMonitors, name) then
@@ -1687,7 +1825,7 @@ end
 
 -- screenPickerScreen
 -- 用于打开其他的屏幕的屏幕
-local screenPickerScreen = {
+screenPickerScreen = {
     screenTitle = "idle"
 }
 screenPickerScreen.__index = setmetatable(screenPickerScreen, abstractScreen)
@@ -1696,6 +1834,8 @@ function screenPickerScreen:init()
     self.rows = {}
     if self.name == "computer" then
         table.insert(self.rows, { name = "screens manager", class = screensManagerScreen })
+        --table.insert(self.rows, { name = "debug", class = debugScreen })
+        --table.insert(self.rows, { name = "log", class = logScreen })
     end
     table.insert(self.rows, { name = "flight gizmo", class = flightGizmoScreen })
     if #self.rows == 1 then
@@ -1737,7 +1877,7 @@ end
 
 -- loadingScreen
 -- 加载屏幕
-local loadingScreen = {
+loadingScreen = {
     screenTitle = "loading"
 }
 loadingScreen.__index = setmetatable(loadingScreen, abstractScreen)
@@ -1758,6 +1898,10 @@ end
 
 function loadingScreen:refresh()
     if self.step == 1 then
+        local name = self.name
+        if name == "computer" then
+            name = os.getComputerLabel() or name
+        end
         local offset_x, offset_y = self.monitor.getSize()
         offset_x = math.floor((offset_x - 15) / 2)
         offset_y = math.floor((offset_y - 10) / 2)
@@ -1770,8 +1914,8 @@ function loadingScreen:refresh()
         self.monitor.setCursorPos(offset_x + 9 - #properties.userName / 2, offset_y + 5)
         self.monitor.write(properties.userName)
 
-        self.monitor.setCursorPos(offset_x + 9 - #self.name / 2 - 1, offset_y + 9)
-        self.monitor.write("[" .. self.name .. "]")
+        self.monitor.setCursorPos(offset_x + 9 - #name / 2 - 1, offset_y + 9)
+        self.monitor.write("[" .. name .. "]")
 
         self.monitor.setCursorPos(offset_x + 1, offset_y + 7)
     end
@@ -1802,13 +1946,11 @@ monitorUtil.newScreen = function(name, class)
     setmetatable(screen, class)
     screen.__index = class
     screen.name = name
-    local monitor
     if name == "computer" then
-        monitor = term.current()
+        screen.monitor = term.current()
     else
-        monitor = peripheral.wrap(name)
+        screen.monitor = peripheral.wrap(name)
     end
-    screen.monitor = monitor
     screen:init()
     return monitorUtil.screens[name] --init有可能会改变屏幕类
 end
@@ -1848,12 +1990,12 @@ end
 monitorUtil.scanMonitors = function()
     for _, name in ipairs(properties.enabledMonitors) do
         if monitorUtil.screens[name] == nil then
-            if name == "computer" or monitorUtil.hasMonitor(name) then
+            if monitorUtil.hasMonitor(name) then
                 monitorUtil.newScreen(name)
             end
         end
     end
-    for _, name in ipairs(properties.enabledMonitors) do
+    for name, _ in pairs(monitorUtil.screens) do
         if not monitorUtil.hasMonitor(name) then
             monitorUtil.screens[name] = nil
         elseif not tableHasValue(properties.enabledMonitors, name) then
@@ -1872,7 +2014,7 @@ end
 monitorUtil.getMonitorNames = function()
     local monitors = peripheral.getNames()
     local result = {}
-    table.insert(monitors, "term")
+    table.insert(monitors, "computer")
     for _, name in ipairs(monitors) do
         if monitorUtil.hasMonitor(name) then
             table.insert(result, name)
@@ -1915,12 +2057,8 @@ function monitorUtil.getMonitorSort(name)
 end
 
 ---------main---------
-system.init()
 
-if term.isColor() then
-    shell.run("background", "shell")
-end
-
+-- 飞控
 function flightUpdate()
     if ship.isStatic() then
         --static
@@ -1939,22 +2077,29 @@ function flightUpdate()
     end
 end
 
+-- 事件监听器
 function listener()
     while true do
         local eventData = { os.pullEvent() }
         local event = eventData[1]
+        --logger.logMessage("on event " .. event)
 
         if event == "monitor_touch" and monitorUtil.screens[eventData[2]] then
             monitorUtil.screens[eventData[2]]:onTouch(eventData[3], eventData[4])
         elseif event == "mouse_click" and monitorUtil.screens["computer"] then
             monitorUtil.screens["computer"]:onTouch(eventData[3], eventData[4])
-        elseif event == "key" and not tableHasValue(properties.enabledMonitors, "computer") then
-            table.insert(properties.enabledMonitors, "computer")
-            system.updatePersistentData()
+        elseif event == "key" then
+            if tableHasValue(properties.enabledMonitors, "computer") then
+                monitorUtil.screens["computer"]:onKey(eventData[2], eventData[3])
+            else
+                table.insert(properties.enabledMonitors, "computer")
+                system.updatePersistentData()
+            end
         end
     end
 end
 
+-- 主循环
 function run()
     while true do
         attUtil.getAtt()
@@ -1967,12 +2112,17 @@ function run()
     end
 end
 
+-- 程序开始
 xpcall(function()
+    if term.isColor() then
+        shell.run("background", "shell")
+    end
+    system.init()
+    attUtil.init()
     monitorUtil.scanMonitors()
     if monitorUtil.screens["computer"] == nil then
         monitorUtil.disconnectComputer()
     end
-    attUtil.init()
     parallel.waitForAll(run, listener)
     error("Unexpected flight control exit")
 end, function(err)
@@ -1986,11 +2136,11 @@ end, function(err)
         c.setTextScale(1)
     end
     if err:find("Terminated") then
-        c.setTextColor(colors.orange)
+        c.setTextColor(colors.red)
         print("Flight control terminated.")
     else
         c.setTextColor(colors.red)
-        print("Flight control error:")
+        print("Flight control occurred root level exception:")
         print(err)
     end
     c.setTextColor(colors.white)
