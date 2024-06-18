@@ -21,6 +21,7 @@ local modelist = {
 }
 
 local system, properties, attUtil, monitorUtil, joyUtil, pdControl, rayCaster, scanner, timeUtil
+local physics_flag = true
 
 ---------system---------
 system = {
@@ -39,7 +40,7 @@ system.init = function()
                 properties[k] = tmpProp[k]
             end
         end
-        if properties.omega_D > 1.52 then properties.omega_D = 1.52 end
+        if properties.omega_D > 2.52 then properties.omega_D = 2.52 end
         system.file:close()
     else
         properties = system.reset()
@@ -74,15 +75,16 @@ system.reset = function()
         },
         enabledMonitors = enabledMonitors,
         omega_P = 1,    --角速度比例, 决定转向快慢
-        omega_D = 1.52, --角速度阻尼, 低了停的慢、太高了会抖动。标准是松杆时快速停下角速度、且停下时不会抖动
+        omega_D = 2.52, --角速度阻尼, 低了停的慢、太高了会抖动。标准是松杆时快速停下角速度、且停下时不会抖动
         space_Acc = 2,  --星舰模式油门速度
         quad_Acc = 1,   --四轴FPV模式油门强度
         move_D = 1.6,   --移动阻尼, 低了停的慢、太高了会抖动。标准是松杆时快速停下、且停下时不会抖动
-        helicopt_YAW_P = 0.5,
+        helicopt_YAW_P = 0.75,
+        helicopt_ROT_P = 1,
         helicopt_ROT_D = 0.75,
-        helicopt_MAX_ANGLE = 45,
+        helicopt_MAX_ANGLE = 30,
         helicopt_ACC = 0.5,
-        helicopt_ACC_D = 0.5,
+        helicopt_ACC_D = 0.75,
         ZeroPoint = 0,
         MAX_MOVE_SPEED = 99,    --自动驾驶 (点循环、跟随模式) 最大跟随速度
         pointLoopWaitTime = 60, --点循环模式-到达目标点后等待时间 (tick)
@@ -501,11 +503,13 @@ end
 ---------timeUtil---------
 timeUtil = {
     SpaceBasedGunCd = 1,
-    pointLoopIndex = 1,
     pointLoopWaitTime = 1
 }
+
 ---------attUtil---------
 attUtil = {
+    poseVel = {},
+    inertia = {},
     position = {},
     prePos = {},
     size = {},
@@ -516,7 +520,6 @@ attUtil = {
     omega = {},
     eulerAngle = {},
     preEuler = {},
-    eulerOmega = {},
     initPoint = {},
     velocity = {},
     speed = {},
@@ -536,26 +539,49 @@ attUtil.quatList = {
     north = { w = -0.70710678118654752440084436210485, x = 0, y = 0.70710678118654752440084436210485, z = 0 },
 }
 
-attUtil.getAtt = function()
-    attUtil.mass = ship.getMass()
-    attUtil.MomentOfInertiaTensor = ship.getMomentOfInertiaTensor()[1][1]
-
-    attUtil.mass = attUtil.mass * ship.getScale().x ^ 3
-    attUtil.MomentOfInertiaTensor = attUtil.MomentOfInertiaTensor * ship.getScale().x ^ 3
+attUtil.getAttWithCCTick = function()
+    attUtil.mass = ship.getMass() * ship.getScale().x ^ 3
+    attUtil.MomentOfInertiaTensor = ship.getMomentOfInertiaTensor()[1][1] * ship.getScale().x ^ 3
 
     attUtil.size = ship.getSize()
     attUtil.position = ship.getWorldspacePosition()
     attUtil.quat = quatMultiply(attUtil.quatList[properties.shipFace], ship.getQuaternion())
     attUtil.conjQuat = getConjQuat(ship.getQuaternion())
     attUtil.matrix = ship.getRotationMatrix()
-    --attUtil.eulerAngle = getEulerByMatrix(attUtil.matrix)
     attUtil.eulerAngle = quat2Euler(attUtil.quat)
     attUtil.pX = RotateVectorByQuat(attUtil.quat, { x = 1, y = 0, z = 0 })
     attUtil.pY = RotateVectorByQuat(attUtil.quat, { x = 0, y = 1, z = 0 })
     attUtil.pZ = RotateVectorByQuat(attUtil.quat, { x = 0, y = 0, z = -1 })
+    attUtil.getOmega(attUtil.pX, attUtil.pY, attUtil.pZ)
+    attUtil.velocity.x = ship.getVelocity().x / 20
+    attUtil.velocity.y = ship.getVelocity().y / 20
+    attUtil.velocity.z = ship.getVelocity().z / 20
+    --commands.execAsync(("say roll=%0.2f  yaw=%0.2f  pitch=%0.2f"):format(attUtil.eulerAngle.roll, attUtil.eulerAngle.yaw, attUtil.eulerAngle.pitch))
+    --commands.execAsync(("say w = %0.2f x=%0.2f  y=%0.2f  z=%0.2f"):format(attUtil.quat.w, attUtil.quat.x, attUtil.quat.y, attUtil.quat.z))
+end
 
-    local XPoint = { x = attUtil.pX.x, y = attUtil.pX.y, z = attUtil.pX.z }
-    local ZPoint = { x = attUtil.pZ.x, y = attUtil.pZ.y, z = attUtil.pZ.z }
+attUtil.getAttWithPhysTick = function()
+    attUtil.mass = attUtil.inertia.mass * ship.getScale().x ^ 3
+    attUtil.MomentOfInertiaTensor = attUtil.inertia.momentOfInertiaTensor[1][1] * ship.getScale().x ^ 3
+
+    attUtil.size = ship.getSize()
+    attUtil.position = attUtil.poseVel.pos
+    attUtil.quat = quatMultiply(attUtil.quatList[properties.shipFace], attUtil.poseVel.rot)
+    attUtil.conjQuat = getConjQuat(attUtil.poseVel.rot)
+    attUtil.matrix = ship.getRotationMatrix()
+    attUtil.eulerAngle = quat2Euler(attUtil.quat)
+    attUtil.pX = RotateVectorByQuat(attUtil.quat, { x = 1, y = 0, z = 0 })
+    attUtil.pY = RotateVectorByQuat(attUtil.quat, { x = 0, y = 1, z = 0 })
+    attUtil.pZ = RotateVectorByQuat(attUtil.quat, { x = 0, y = 0, z = -1 })
+    attUtil.getOmega(attUtil.pX, attUtil.pY, attUtil.pZ)
+    attUtil.velocity.x = attUtil.poseVel.vel.x / 60
+    attUtil.velocity.y = attUtil.poseVel.vel.y / 60
+    attUtil.velocity.z = attUtil.poseVel.vel.z / 60
+end
+
+attUtil.getOmega = function(xp, yp, zp)
+    local XPoint = { x = xp.x, y = xp.y, z = xp.z }
+    local ZPoint = { x = zp.x, y = zp.y, z = zp.z }
     attUtil.preQuat.x = -attUtil.preQuat.x
     attUtil.preQuat.y = -attUtil.preQuat.y
     attUtil.preQuat.z = -attUtil.preQuat.z
@@ -564,16 +590,6 @@ attUtil.getAtt = function()
     attUtil.omega.roll = math.deg(math.asin(ZPoint.y))
     attUtil.omega.pitch = math.deg(math.asin(XPoint.y))
     attUtil.omega.yaw = math.deg(math.atan2(-XPoint.z, XPoint.x))
-
-    attUtil.eulerOmega.roll = attUtil.eulerAngle.roll - attUtil.preEuler.roll
-    attUtil.eulerOmega.yaw = attUtil.eulerAngle.yaw - attUtil.preEuler.yaw
-    attUtil.eulerOmega.pitch = attUtil.eulerAngle.pitch - attUtil.preEuler.pitch
-
-    attUtil.velocity.x = ship.getVelocity().x / 20
-    attUtil.velocity.y = ship.getVelocity().y / 20
-    attUtil.velocity.z = ship.getVelocity().z / 20
-    --commands.execAsync(("say roll=%0.2f  yaw=%0.2f  pitch=%0.2f"):format(attUtil.eulerAngle.roll, attUtil.eulerAngle.yaw, attUtil.eulerAngle.pitch))
-    --commands.execAsync(("say w = %0.2f x=%0.2f  y=%0.2f  z=%0.2f"):format(attUtil.quat.w, attUtil.quat.x, attUtil.quat.y, attUtil.quat.z))
 end
 
 attUtil.setPreAtt = function()
@@ -633,10 +649,6 @@ joyUtil = {
     cd = 0,
     flag = false
 }
-
-joyUtil.init = function()
-
-end
 
 joyUtil.getJoyInput = function()
     if not joyUtil.joy or not peripheral.hasType(joyUtil.joy, "tweaked_controller") then
@@ -722,13 +734,21 @@ pdControl = {
     xSpeed = 0,
     ySpeed = 0,
     zSpeed = 0,
-    basicYSpeed = 30,
-    fixCd = 0
+    fixCd = 0,
+    pointLoopIndex = 1,
+    basicYSpeed = 10,
+    helicopt_P_multiply = 1,
+    helicopt_D_multiply = 1,
+    rot_P_multiply = 1,
+    rot_D_multiply = 1,
+    move_P_multiply = 1,
+    move_D_multiply = 100,
+    airMass_multiply = 10
 }
 
 pdControl.moveWithOutRot = function(xVal, yVal, zVal, p, d)
-    p = p * 2
-    d = d * 200
+    p = p * pdControl.move_P_multiply
+    d = d * pdControl.move_D_multiply
     pdControl.xSpeed = xVal * p + -attUtil.velocity.x * d
     pdControl.zSpeed = zVal * p + -attUtil.velocity.z * d
     pdControl.ySpeed = yVal * p + pdControl.basicYSpeed + -attUtil.velocity.y * d
@@ -739,8 +759,8 @@ pdControl.moveWithOutRot = function(xVal, yVal, zVal, p, d)
 end
 
 pdControl.moveWithRot = function(xVal, yVal, zVal, p, d)
-    p = p * 2
-    d = d * 200
+    p = p * pdControl.move_P_multiply
+    d = d * pdControl.move_D_multiply
     pdControl.xSpeed = -attUtil.velocity.x * d
     pdControl.zSpeed = -attUtil.velocity.z * d
     pdControl.ySpeed = yVal * p + pdControl.basicYSpeed + -attUtil.velocity.y * d
@@ -755,8 +775,8 @@ pdControl.moveWithRot = function(xVal, yVal, zVal, p, d)
 end
 
 pdControl.quadUp = function(yVal, p, d, hov)
-    p = p * 2
-    d = d * 200
+    p = p * pdControl.move_P_multiply
+    d = d * pdControl.move_D_multiply
     if hov then
         local omegaApplyRot = RotateVectorByQuat(attUtil.quat, { x = 0, y = attUtil.velocity.y, z = 0 })
         pdControl.ySpeed = (yVal + -math.deg(math.asin(properties.ZeroPoint))) * p + pdControl.basicYSpeed * 2 +
@@ -767,16 +787,21 @@ pdControl.quadUp = function(yVal, p, d, hov)
 
     ship.applyRotDependentForce(0, pdControl.ySpeed * attUtil.mass, 0)
 
-    pdControl.xSpeed = copysign((attUtil.velocity.x ^ 2) * 10 * properties.airMass, -attUtil.velocity.x)
-    pdControl.zSpeed = copysign((attUtil.velocity.z ^ 2) * 10 * properties.airMass, -attUtil.velocity.z)
-    pdControl.ySpeed = copysign((attUtil.velocity.y ^ 2) * 10 * properties.airMass, -attUtil.velocity.y)
+    pdControl.xSpeed = copysign((attUtil.velocity.x ^ 2) * pdControl.airMass_multiply * properties.airMass,
+        -attUtil.velocity.x)
+    pdControl.zSpeed = copysign((attUtil.velocity.z ^ 2) * pdControl.airMass_multiply * properties.airMass,
+        -attUtil.velocity.z)
+    pdControl.ySpeed = copysign((attUtil.velocity.y ^ 2) * pdControl.airMass_multiply * properties.airMass,
+        -attUtil.velocity.y)
 
     ship.applyInvariantForce(pdControl.xSpeed * attUtil.mass,
-        pdControl.ySpeed * attUtil.mass + properties.quadGravity * 30 * attUtil.mass,
+        pdControl.ySpeed * attUtil.mass + properties.quadGravity * pdControl.basicYSpeed * attUtil.mass,
         pdControl.zSpeed * attUtil.mass)
 end
 
 pdControl.rotInner = function(xRot, yRot, zRot, p, d)
+    p                    = p * pdControl.rot_P_multiply
+    d                    = d * pdControl.rot_D_multiply
     pdControl.pitchSpeed = (attUtil.omega.pitch + zRot) * p + -attUtil.omega.pitch * 7 * d
     pdControl.rollSpeed  = (attUtil.omega.roll + xRot) * p + -attUtil.omega.roll * 7 * d
     pdControl.yawSpeed   = (attUtil.omega.yaw + yRot) * p + -attUtil.omega.yaw * 7 * d
@@ -796,9 +821,6 @@ pdControl.rotate2Euler = function(euler, p, d)
     yaw                          = tgAg.yaw * (1 - attUtil.pX.y ^ 2) + -tgAg.roll * (attUtil.pX.y ^ 2)
     roll                         = tgAg.roll * (1 - attUtil.pX.y ^ 2) + tgAg.yaw * (attUtil.pX.y ^ 2)
     pitch                        = tgAg.pitch * (1 - attUtil.pZ.y ^ 2) + tgAg.yaw * (attUtil.pZ.y ^ 2)
-    roll                         = roll
-    yaw                          = yaw
-    pitch                        = pitch
 
     pdControl.rotInner(roll, yaw, pitch, p, d)
 end
@@ -852,13 +874,13 @@ pdControl.quadFPV = function()
         if joyUtil.LeftStick.y == 0 then
             pdControl.quadUp(
                 0,
-                properties.quad_Acc,
+                properties.quad_Acc / pdControl.rot_D_multiply,
                 properties.move_D,
                 true)
         else
             pdControl.quadUp(
                 math.deg(math.asin(joyUtil.LeftStick.y)),
-                properties.quad_Acc,
+                properties.quad_Acc / pdControl.rot_D_multiply,
                 properties.move_D,
                 false)
         end
@@ -885,7 +907,7 @@ pdControl.quadFPV = function()
         else
             pdControl.rotate2Euler({
                     roll = math.deg(math.asin(joyUtil.RightStick.x)) / 1.5,
-                    yaw = attUtil.eulerAngle.yaw + joyUtil.LeftStick.x * 40,
+                    yaw = attUtil.eulerAngle.yaw + joyUtil.LeftStick.x * 40 / pdControl.rot_D_multiply,
                     pitch = math.deg(math.asin(joyUtil.RightStick.y) / 1.5)
                 },
                 properties.omega_P,
@@ -894,7 +916,7 @@ pdControl.quadFPV = function()
     else
         pdControl.quadUp(
             math.deg(math.asin(joyUtil.LeftStick.y)),
-            properties.quad_Acc,
+            properties.quad_Acc / pdControl.rot_D_multiply,
             properties.move_D,
             false)
         pdControl.rotInner(
@@ -934,11 +956,15 @@ pdControl.helicopter = function()
 
     pdControl.quadUp(
         acc,
-        properties.helicopt_ACC,
+        properties.helicopt_ACC / 4 / pdControl.rot_D_multiply,
         properties.helicopt_ACC_D,
         true)
 
-    pdControl.rotate2Euler(tgAg, properties.helicopt_ROT_D, properties.helicopt_ROT_D)
+    pdControl.rotate2Euler(
+        tgAg,
+        0.5 * properties.helicopt_ROT_D * pdControl.helicopt_P_multiply,
+        properties.helicopt_ROT_D / pdControl.rot_D_multiply
+    )
 end
 
 pdControl.gotoPosition = function(euler, pos)
@@ -1018,7 +1044,7 @@ end
 
 pdControl.pointLoop = function()
     local tgAg, pos = {}, {}
-    pos = properties.pointList[timeUtil.pointLoopIndex]
+    pos = properties.pointList[pdControl.pointLoopIndex]
     tgAg = { roll = 0, yaw = pos.yaw, pitch = 0 }
     if pos.flip then
         tgAg.pitch = 180
@@ -1028,10 +1054,10 @@ pdControl.pointLoop = function()
         math.abs(attUtil.position.z - pos.z) < 0.5 then
         if timeUtil.pointLoopWaitTime >= properties.pointLoopWaitTime then
             timeUtil.pointLoopWaitTime = 1
-            if timeUtil.pointLoopIndex >= #properties.pointList then
-                timeUtil.pointLoopIndex = 1
+            if pdControl.pointLoopIndex >= #properties.pointList then
+                pdControl.pointLoopIndex = 1
             else
-                timeUtil.pointLoopIndex = timeUtil.pointLoopIndex + 1
+                pdControl.pointLoopIndex = pdControl.pointLoopIndex + 1
             end
         else
             timeUtil.pointLoopWaitTime = timeUtil.pointLoopWaitTime + 1
@@ -1097,11 +1123,12 @@ function flightGizmoScreen:init()
     if self.monitor.setTextScale then
         self.monitor.setTextScale(0.5)
     end
-    self.monitor.setBackgroundColor(colors.lightBlue)
+    self.monitor.setBackgroundColor(colors.black)
+    self.mainIndex = 1
     self.mainPage = {
-        modeSelect   = { x = 1, name = " MOD ", flag = true },
-        attIndicator = { x = 6, name = " ATT ", flag = false },
-        settings     = { x = 11, name = " SET ", flag = false }
+        { name = "  <<  MOD  >>  ", flag = true },
+        { name = "  <<  ATT  >>  ", flag = false },
+        { name = "  <<  SET  >>  ", flag = false }
     }
     self.settingPage = {
         PD_Tuning   = { y = 3, name = "PD_Tuning  ", selected = false, flag = false },
@@ -1111,7 +1138,7 @@ function flightGizmoScreen:init()
         Simulate    = { y = 7, name = "Simulate   ", selected = false, flag = false },
         SET_ATT     = { y = 8, name = "Set_Att    ", selected = false, flag = false },
     }
-    self.attPage = {
+    self.attPageList = {
         compass = { name = "compass", flag = true },
         level = { name = "level", flag = false }
     }
@@ -1124,11 +1151,11 @@ function flightGizmoScreen:init()
 end
 
 function flightGizmoScreen:report()
-    if self.mainPage.modeSelect.flag then
+    if self.mainPage[1].flag then
         return "Tab: MOD"
-    elseif self.mainPage.attIndicator.flag then
+    elseif self.mainPage[2].flag then
         return "Tab: ATT"
-    elseif self.mainPage.settings.flag then
+    elseif self.mainPage[3].flag then
         return "Tab: SET"
     else
         return "Tab: ?"
@@ -1138,7 +1165,7 @@ end
 function flightGizmoScreen:refresh()
     if coordinate and not scanner.commander then
         for k, v in pairs(self.mainPage) do
-            if v == self.mainPage.settings then
+            if v == self.mainPage[3] then
                 scanner.scanPlayer()
                 v.flag = true
             else
@@ -1156,15 +1183,17 @@ function flightGizmoScreen:refresh()
     self.monitor.clear()
 
     for key, value in pairs(self.mainPage) do
-        self.monitor.setCursorPos(value.x, 1)
+        self.monitor.setCursorPos(1, 1)
         if value.flag then
-            self.monitor.blit(value.name, "fffff", "44444")
-        else
-            self.monitor.blit(value.name, "00000", "22222")
+            self.monitor.blit(value.name, "ffaa2222222aaff", "fffffffffffffff")
         end
     end
 
-    if self.mainPage.modeSelect.flag then --modePage
+    if self.mainPage[1].flag then --modePage
+        if not physics_flag then
+            self.monitor.setCursorPos(1, 2)
+            self.monitor.blit("*", "4", "f")
+        end
         if ship.isStatic() then
             self.monitor.setCursorPos(4, 2)
             self.monitor.blit("[STATIC!]", "eeeeeeeee", "111111111")
@@ -1172,134 +1201,108 @@ function flightGizmoScreen:refresh()
         for key, mode in pairs(modelist) do
             self.monitor.setCursorPos(2, mode.y)
             if mode.flag then
-                self.monitor.blit(mode.name, "ffffffffff", "4444444444")
+                self.monitor.blit(mode.name, "ffffffffff", "aaaaaaaaaa")
             else
-                self.monitor.blit(mode.name, "0000000000", "3333333333")
+                self.monitor.blit(mode.name, "8888888888", "ffffffffff")
             end
         end
 
         if properties.mode == modelist[1].name then
             self.monitor.setCursorPos(12, modelist[1].y)
             if modelist[1].lock then
-                self.monitor.blit(" L", "ff", "33")
+                self.monitor.blit(" L", "22", "ff")
             else
-                self.monitor.blit(" N", "88", "33")
+                self.monitor.blit(" N", "88", "ff")
             end
         end
 
         if properties.mode == modelist[2].name then
             self.monitor.setCursorPos(12, modelist[2].y)
             if modelist[2].lock then
-                self.monitor.blit(" A", "ff", "33")
+                self.monitor.blit(" A", "22", "ff")
             else
-                self.monitor.blit(" N", "88", "33")
+                self.monitor.blit(" N", "88", "ff")
             end
         end
 
         if properties.mode == modelist[3].name then
             self.monitor.setCursorPos(12, modelist[3].y)
             if modelist[3].lock then
-                self.monitor.blit(" L", "ff", "33")
+                self.monitor.blit(" L", "22", "ff")
             else
-                self.monitor.blit(" N", "88", "33")
+                self.monitor.blit(" N", "88", "ff")
             end
         end
-    elseif self.mainPage.attIndicator.flag then --attPage
-        if self.attPage.compass.flag then       --罗盘
-            self.monitor.setCursorPos(1, 2)
-            for i = 1, 15, 1 do
-                self.monitor.setCursorPos(i, 2)
-                self.monitor.blit(".", "0", "3")
-            end
-
-            local xPoint = math.floor(math.cos(math.rad(attUtil.eulerAngle.yaw)) * 8 + 0.5)
-            local zPoint = math.floor(math.sin(math.rad(attUtil.eulerAngle.yaw)) * 8 + 0.5)
-            if attUtil.pX.x > 0 then
-                self.monitor.setCursorPos(8 + zPoint, 2)
-                self.monitor.blit("W", "0", "3")
-            else
-                self.monitor.setCursorPos(8 - zPoint, 2)
-                self.monitor.blit("E", "0", "3")
-            end
-
-            if attUtil.pX.z > 0 then
-                self.monitor.setCursorPos(8 + xPoint, 2)
-                self.monitor.blit("N", "e", "3")
-            else
-                self.monitor.setCursorPos(8 - xPoint, 2)
-                self.monitor.blit("S", "b", "3")
-            end
-        elseif self.attPage.level.flag then --水平仪
-            for i = 1, 128, 1 do
-                local yPoint = math.abs(attUtil.eulerAngle.roll) > 90 and -attUtil.pZ.y or attUtil.pZ.y
-                self.monitor.setCursorPos(8 - math.cos(math.asin(attUtil.pX.y)) * (8 - i),
-                    6 - (attUtil.pX.y * 6) - yPoint * (8 - i))
-                self.monitor.blit(" ", "0", "0")
-            end
-        end
-    elseif self.mainPage.settings.flag then --settingPage
+    elseif self.mainPage[2].flag then     --attPage
+        self:attPage()
+    elseif self.mainPage[3].flag then --settingPage
         if self.settingPage.PD_Tuning.flag then
             modelist[1].lock = false
             self.monitor.setCursorPos(1, 2)
-            self.monitor.blit("<<", "24", "33")
+            self.monitor.blit("<<", "24", "ff")
 
             self.monitor.setCursorPos(2, 3)
-            self.monitor.blit("P: --      ++", "1ffffffffffff", "333b53333331e")
+            self.monitor.blit("P: --      ++", "1ffffffffffff", "fffb5ffffff1e")
             self.monitor.setCursorPos(8, 3)
             self.monitor.write(string.format("%0.2f", properties.omega_P))
 
             self.monitor.setCursorPos(2, 4)
-            self.monitor.blit("D: --      ++", "9ffffffffffff", "333b53333331e")
+            self.monitor.blit("D: --      ++", "9ffffffffffff", "fffb5ffffff1e")
             self.monitor.setCursorPos(8, 4)
             self.monitor.write(string.format("%0.2f", properties.omega_D))
 
             self.monitor.setCursorPos(2, 6)
-            self.monitor.blit("spaceAcc-   +", "fffffffffffff", "33333333b333e")
+            self.monitor.blit("spaceAcc-   +", "fffffffffffff", "ffffffffbfffe")
             self.monitor.setCursorPos(11, 6)
             self.monitor.write(string.format("%0.1f", properties.space_Acc))
 
             self.monitor.setCursorPos(2, 7)
-            self.monitor.blit("quad_Acc-   +", "fffffffffffff", "33333333b333e")
+            self.monitor.blit("quad_Acc-   +", "fffffffffffff", "ffffffffbfffe")
             self.monitor.setCursorPos(11, 7)
             self.monitor.write(string.format("%0.1f", properties.quad_Acc))
 
             self.monitor.setCursorPos(2, 8)
-            self.monitor.blit("MOVE_D: -   +", "fffffffffffff", "33333333b333e")
+            self.monitor.blit("MOVE_D: -   +", "fffffffffffff", "ffffffffbfffe")
             self.monitor.setCursorPos(11, 8)
             self.monitor.write(string.format("%0.1f", properties.move_D))
         elseif self.settingPage.helicopter.flag then
             self.monitor.setCursorPos(1, 2)
-            self.monitor.blit("<<", "24", "33")
+            self.monitor.blit("<<", "24", "ff")
 
             self.monitor.setCursorPos(2, 3)
-            self.monitor.blit("Yaw_P--    ++", "fffffffffffff", "33333b533331e")
+            self.monitor.blit("Yaw_P--    ++", "fffffffffffff", "fffffb5ffff1e")
             self.monitor.setCursorPos(9, 3)
             self.monitor.write(string.format("%0.2f", properties.helicopt_YAW_P))
 
             self.monitor.setCursorPos(2, 4)
-            self.monitor.blit("Rot_D--    ++", "fffffffffffff", "33333b533331e")
+            self.monitor.blit("Rot_P--    ++", "fffffffffffff", "fffffb5ffff1e")
             self.monitor.setCursorPos(9, 4)
-            self.monitor.write(string.format("%0.2f", properties.helicopt_ROT_D))
+            self.monitor.write(string.format("%0.2f", properties.helicopt_ROT_P))
 
             self.monitor.setCursorPos(2, 5)
-            self.monitor.blit("ACC:-   +", "fffffffff", "3333b333e")
-            self.monitor.setCursorPos(7, 5)
-            self.monitor.write(string.format("%0.1f", properties.helicopt_ACC))
+            self.monitor.blit("Rot_D--    ++", "fffffffffffff", "fffffb5ffff1e")
+            self.monitor.setCursorPos(9, 5)
+            self.monitor.write(string.format("%0.2f", properties.helicopt_ROT_D))
 
             self.monitor.setCursorPos(2, 6)
-            self.monitor.blit("Acc_D--    ++", "fffffffffffff", "33333b533331e")
-            self.monitor.setCursorPos(9, 6)
-            self.monitor.write(string.format("%0.2f", properties.helicopt_ACC_D))
+            self.monitor.blit("ACC:-   +", "fffffffff", "ffffbfffe")
+            self.monitor.setCursorPos(7, 6)
+            self.monitor.write(string.format("%0.1f", properties.helicopt_ACC))
 
             self.monitor.setCursorPos(2, 7)
-            self.monitor.blit("MaxAngle:-  +", "fffffffffffff", "333333333b33e")
-            self.monitor.setCursorPos(12, 7)
+            self.monitor.blit("Acc_D--    ++", "fffffffffffff", "fffffb5ffff1e")
+            self.monitor.setCursorPos(9, 7)
+            self.monitor.write(string.format("%0.2f", properties.helicopt_ACC_D))
+
+            self.monitor.setCursorPos(2, 8)
+            self.monitor.blit("MaxAngle:-  +", "fffffffffffff", "fffffffffbffe")
+            self.monitor.setCursorPos(12, 8)
             self.monitor.write(string.format("%d", properties.helicopt_MAX_ANGLE))
         elseif self.settingPage.User_Change.flag then
             self.monitor.setCursorPos(1, 2)
-            self.monitor.blit("<<", "24", "33")
+            self.monitor.blit("<<", "24", "ff")
             self.monitor.setCursorPos(2, 3)
-            self.monitor.blit("selectUser:", "fffffffffff", "33333333333")
+            self.monitor.blit("selectUser:", "fffffffffff", "fffffffffff")
             for i = 1, 5, 1 do
                 if scanner.playerList[i] then
                     local name = scanner.playerList[i].name
@@ -1323,28 +1326,28 @@ function flightGizmoScreen:refresh()
             end
         elseif self.settingPage.HOME_SET.flag then
             self.monitor.setCursorPos(1, 2)
-            self.monitor.blit("<<", "24", "33")
+            self.monitor.blit("<<", "24", "ff")
         elseif self.settingPage.Simulate.flag then
             self.monitor.setCursorPos(1, 2)
-            self.monitor.blit("<<", "24", "33")
+            self.monitor.blit("<<", "24", "ff")
 
             self.monitor.setCursorPos(2, 4)
-            self.monitor.blit("AirMass-    +", "fffffffffffff", "3333333b3333e")
+            self.monitor.blit("AirMass-    +", "fffffffffffff", "fffffffbffffe")
             self.monitor.setCursorPos(10, 4)
             self.monitor.write(string.format("%0.1f", properties.airMass))
 
             self.monitor.setCursorPos(2, 6)
-            self.monitor.blit("Gravity-    +", "fffffffffffff", "3333333b3333e")
+            self.monitor.blit("Gravity-    +", "fffffffffffff", "fffffffbffffe")
             self.monitor.setCursorPos(10, 6)
             self.monitor.write(string.format("%0.1f", properties.quadGravity))
 
             self.monitor.setCursorPos(2, 8)
-            self.monitor.blit("0_Point-    +", "fffffffffffff", "3333333b3333e")
+            self.monitor.blit("0_Point-    +", "fffffffffffff", "fffffffbffffe")
             self.monitor.setCursorPos(10, 8)
             self.monitor.write(string.format("%0.1f", properties.ZeroPoint))
         elseif self.settingPage.SET_ATT.flag then
             self.monitor.setCursorPos(1, 2)
-            self.monitor.blit("<<", "24", "33")
+            self.monitor.blit("<<", "24", "ff")
 
             for k, v in pairs(self.faceList) do
                 if v.name == properties.shipFace then
@@ -1359,9 +1362,9 @@ function flightGizmoScreen:refresh()
             for key, value in pairs(self.settingPage) do
                 self.monitor.setCursorPos(2, value.y)
                 if value.selected then
-                    self.monitor.blit(value.name, "fffffffffff", "44444444444")
+                    self.monitor.blit(value.name, "fffffffffff", "aaaaaaaaaaa")
                 else
-                    self.monitor.blit(value.name, "00000000000", "33333333333")
+                    self.monitor.blit(value.name, "88888888888", "fffffffffff")
                 end
             end
         end
@@ -1369,24 +1372,111 @@ function flightGizmoScreen:refresh()
 
     --reboot and shutdown
     self.monitor.setCursorPos(1, 10)
-    self.monitor.blit("[|]", "eee", "333")
-    self.monitor.blit("[R]", "444", "333")
+    self.monitor.blit("[|]", "eee", "fff")
+    self.monitor.blit("[R]", "bbb", "fff")
     self.monitor.setCursorPos(13, 10)
-    self.monitor.blit("[X]", "fff", "333")
+    self.monitor.blit("[X]", "888", "fff")
+end
+
+function flightGizmoScreen:attPage()
+    if self.attPageList.compass.flag then --罗盘
+        self.monitor.setCursorPos(1, 2)
+        for i = 1, 15, 1 do
+            self.monitor.setCursorPos(i, 2)
+            self.monitor.blit(".", "8", "f")
+        end
+    
+        local xPoint = math.floor(math.cos(math.rad(attUtil.eulerAngle.yaw)) * 8 + 0.5)
+        local zPoint = math.floor(math.sin(math.rad(attUtil.eulerAngle.yaw)) * 8 + 0.5)
+        if attUtil.pX.x > 0 then
+            self.monitor.setCursorPos(8 + zPoint, 2)
+            self.monitor.blit("W", "0", "f")
+        else
+            self.monitor.setCursorPos(8 - zPoint, 2)
+            self.monitor.blit("E", "0", "f")
+        end
+    
+        if attUtil.pX.z > 0 then
+            self.monitor.setCursorPos(8 + xPoint, 2)
+            self.monitor.blit("N", "e", "f")
+        else
+            self.monitor.setCursorPos(8 - xPoint, 2)
+            self.monitor.blit("S", "b", "f")
+        end
+
+        local lPointy = math.abs(attUtil.eulerAngle.pitch) > 90 and attUtil.pZ.y or -attUtil.pZ.y
+        lPointy = math.floor(lPointy * 5 + 0.5)
+        lPointy = math.abs(lPointy) > 3 and copysign(3, lPointy) or lPointy
+        local xPointy = math.abs(attUtil.eulerAngle.pitch) > 90 and attUtil.pX.y or -attUtil.pX.y
+        xPointy = 6 + math.floor(xPointy * 15 + 0.5)
+        local i2
+        for i = 1, 7, 1 do
+            i2 = i + 2
+            self.monitor.setCursorPos(1, i2)
+            if i2 == 6 + lPointy then
+                self.monitor.blit("-", "8", "f")
+            end
+            self.monitor.setCursorPos(2, i2)
+            if i2 == xPointy then
+                self.monitor.blit(" >-", "808", "fff")
+            else
+                self.monitor.blit("  -", "888", "fff")
+            end
+
+            self.monitor.setCursorPos(15, i2)
+            if i2 == 6 - lPointy then
+                self.monitor.blit("-", "8", "f")
+            end
+            self.monitor.setCursorPos(12, i2)
+            if i2 == xPointy then
+                self.monitor.blit("-< ", "808", "fff")
+            else
+                self.monitor.blit("-  ", "888", "fff")
+            end
+        end
+        if xPointy < 3 then
+            self.monitor.setCursorPos(3, 3)
+            self.monitor.blit("^", "0", "f")
+            self.monitor.setCursorPos(13, 3)
+            self.monitor.blit("^", "0", "f")
+        elseif xPointy > 9 then
+            self.monitor.setCursorPos(3, 9)
+            self.monitor.blit("v", "0", "f")
+            self.monitor.setCursorPos(13, 9)
+            self.monitor.blit("v", "0", "f")
+        end
+
+        self.monitor.setCursorPos(7, 4)
+        self.monitor.blit(("yaw"):format(), "fff", "bbb")
+        self.monitor.setCursorPos(6, 5)
+        self.monitor.write(formatN(attUtil.eulerAngle.yaw, 1))
+
+    elseif self.attPageList.level.flag then --水平仪
+    end
 end
 
 function flightGizmoScreen:onTouch(x, y)
     if y < 2 then
-        for key, value in pairs(self.mainPage) do
-            if x >= value.x and x <= value.x + 4 then
-                value.flag = true
-            else
-                value.flag = false
+        if x < 7 or x > 10 then
+            self.mainPage[self.mainIndex].flag = false
+            if x < 7 then
+                if self.mainIndex > 1 then
+                    self.mainIndex = self.mainIndex - 1
+                else
+                    self.mainIndex = #self.mainPage
+                end
+            elseif x > 9 then
+                if self.mainIndex < 3 then
+                    self.mainIndex = self.mainIndex + 1
+                else
+                    self.mainIndex = 1
+                end
             end
+            self.mainPage[self.mainIndex].flag = true
         end
     end
 
-    if self.mainPage.modeSelect.flag then
+    if self.mainPage[1].flag then
         if x < 12 then
             if y >= 3 and y <= 8 then
                 for key, value in pairs(modelist) do
@@ -1412,7 +1502,7 @@ function flightGizmoScreen:onTouch(x, y)
                 modelist[2].lock = not modelist[2].lock
             end
         end
-    elseif self.mainPage.settings.flag then
+    elseif self.mainPage[3].flag then
         if self.settingPage.PD_Tuning.flag then
             if y == 2 and x < 3 then
                 self.settingPage.PD_Tuning.flag = false
@@ -1440,7 +1530,7 @@ function flightGizmoScreen:onTouch(x, y)
                     properties.omega_D = properties.omega_D + 0.1
                 end
 
-                if properties.omega_D >= 1.52 then properties.omega_D = 1.52 end
+                if properties.omega_D >= 2.52 then properties.omega_D = 2.52 end
             elseif y == 6 then
                 if x == 10 then
                     properties.space_Acc = properties.space_Acc - 0.1
@@ -1480,6 +1570,16 @@ function flightGizmoScreen:onTouch(x, y)
                 end
             elseif y == 4 then
                 if x == 7 then
+                    properties.helicopt_ROT_P = properties.helicopt_ROT_P - 0.1
+                elseif x == 8 then
+                    properties.helicopt_ROT_P = properties.helicopt_ROT_P - 0.01
+                elseif x == 13 then
+                    properties.helicopt_ROT_P = properties.helicopt_ROT_P + 0.01
+                elseif x == 14 then
+                    properties.helicopt_ROT_P = properties.helicopt_ROT_P + 0.1
+                end
+            elseif y == 5 then
+                if x == 7 then
                     properties.helicopt_ROT_D = properties.helicopt_ROT_D - 0.1
                 elseif x == 8 then
                     properties.helicopt_ROT_D = properties.helicopt_ROT_D - 0.01
@@ -1488,13 +1588,13 @@ function flightGizmoScreen:onTouch(x, y)
                 elseif x == 14 then
                     properties.helicopt_ROT_D = properties.helicopt_ROT_D + 0.1
                 end
-            elseif y == 5 then
+            elseif y == 6 then
                 if x == 6 then
                     properties.helicopt_ACC = properties.helicopt_ACC - 0.1
                 elseif x == 10 then
                     properties.helicopt_ACC = properties.helicopt_ACC + 0.1
                 end
-            elseif y == 6 then
+            elseif y == 7 then
                 if x == 7 then
                     properties.helicopt_ACC_D = properties.helicopt_ACC_D - 0.1
                 elseif x == 8 then
@@ -1504,7 +1604,7 @@ function flightGizmoScreen:onTouch(x, y)
                 elseif x == 14 then
                     properties.helicopt_ACC_D = properties.helicopt_ACC_D + 0.1
                 end
-            elseif y == 7 then
+            elseif y == 8 then
                 if x == 11 then
                     properties.helicopt_MAX_ANGLE = properties.helicopt_MAX_ANGLE - 1
                 elseif x == 14 then
@@ -1628,7 +1728,7 @@ function screensManagerScreen:refresh()
         end
     end)
     self.monitor.setTextColor(colors.white)
-    self.monitor.setBackgroundColor(colors.lightBlue)
+    self.monitor.setBackgroundColor(colors.black)
     self.monitor.clear()
     self.monitor.setCursorPos(1, 1)
     self.monitor.write("Monitors:")
@@ -1667,7 +1767,7 @@ function screensManagerScreen:refresh()
         if report then
             self.monitor.write("[" .. report .. "]")
         end
-        self.monitor.setBackgroundColor(colors.lightBlue)
+        self.monitor.setBackgroundColor(colors.black)
     end
     self.rows = newrows
 end
@@ -1706,7 +1806,7 @@ end
 
 function screenPickerScreen:refresh()
     self.monitor.setTextColor(colors.white)
-    self.monitor.setBackgroundColor(colors.lightBlue)
+    self.monitor.setBackgroundColor(colors.black)
     self.monitor.clear()
     self.monitor.setCursorPos(1, 1)
     self.monitor.write("Choose screen:")
@@ -1723,7 +1823,7 @@ function screenPickerScreen:refresh()
                 self.monitor.setBackgroundColor(colors.gray)
             end
             self.monitor.write(row.name)
-            self.monitor.setBackgroundColor(colors.lightBlue)
+            self.monitor.setBackgroundColor(colors.black)
         end
     end
 end
@@ -1939,10 +2039,36 @@ function flightUpdate()
     end
 end
 
+local phys_Count = 1
+local testRun = function(phys)
+    attUtil.poseVel = phys.getPoseVel()
+    attUtil.inertia = phys.getInertia()
+    attUtil.getAttWithPhysTick()
+    joyUtil.getJoyInput()
+
+    if phys_Count == 3 then
+        scanner.scan()
+        monitorUtil.refresh()
+        phys_Count = 1
+    else
+        phys_Count = phys_Count + 1
+    end
+
+    flightUpdate()
+    attUtil.setPreAtt()
+end
+
 function listener()
     while true do
         local eventData = { os.pullEvent() }
         local event = eventData[1]
+
+        if event == "physics_tick" then
+            if physics_flag then
+                physics_flag = false
+            end
+            testRun(eventData[2])
+        end
 
         if event == "monitor_touch" and monitorUtil.screens[eventData[2]] then
             monitorUtil.screens[eventData[2]]:onTouch(eventData[3], eventData[4])
@@ -1956,10 +2082,24 @@ function listener()
 end
 
 function run()
+    sleep(0.5)
+    if physics_flag then
+        pdControl.basicYSpeed = 30
+        pdControl.helicopt_P_multiply = 1.5
+        pdControl.helicopt_D_multiply = 4
+        pdControl.rot_P_multiply = 1.5
+        pdControl.rot_D_multiply = 0.5
+        pdControl.move_P_multiply = 2
+        pdControl.move_D_multiply = 100
+        pdControl.airMass_multiply = 20
+    else
+        return
+    end
+
     while true do
-        attUtil.getAtt()
-        joyUtil.getJoyInput()
         scanner.scan()
+        attUtil.getAttWithCCTick()
+        joyUtil.getJoyInput()
         monitorUtil.refresh()
         flightUpdate()
         attUtil.setPreAtt()
